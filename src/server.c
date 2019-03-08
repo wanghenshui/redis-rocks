@@ -55,6 +55,7 @@
 #include <sys/utsname.h>
 #include <locale.h>
 #include <sys/socket.h>
+//#include <sys/eventfd.h>
 
 /* Our shared "common" objects */
 
@@ -1393,6 +1394,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * blocking commands. */
     moduleHandleBlockedClients();
 
+	/* FIXME: producing queue data here*/
+
     /* Try to process pending commands for clients that were just unblocked. */
     if (listLength(server.unblocked_clients))
         processUnblockedClients();
@@ -2150,6 +2153,21 @@ void initServer(void) {
                 "Error registering the readable event for the module "
                 "blocked clients subsystem.");
     }
+
+	/* Register producing event*/
+	if (aeCreateFileEvent(server.el, server.producing_hotkey_pipe[0], AE_READABLE,
+		swapdataProducingProcess, NULL) == AE_ERR) {
+		serverPanic(
+			"Error registering the producing readable event for the rocksdb "
+			"blocked clients subsystem.");
+	}
+
+	if (aeCreateFileEvent(server.el, server.comsuming_coldkey_pipe[0], AE_READABLE,
+		swapdataComsumingProcess, NULL) == AE_ERR) {
+		serverPanic(
+			"Error registering the consuming readable event for the rocksdb "
+			"blocked clients subsystem.");
+	}
 
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON) {
@@ -4049,6 +4067,7 @@ int main(int argc, char **argv) {
     initServerConfig();
     moduleInitModulesSystem();
 
+
     /* Store the executable path and arguments in a safe place in order
      * to be able to restart the server later. */
     server.executable = getAbsolutePath(argv[0]);
@@ -4158,6 +4177,7 @@ int main(int argc, char **argv) {
     if (background) daemonize();
 
     initServer();
+	InitRocksDB();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
     redisAsciiArt();

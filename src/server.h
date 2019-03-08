@@ -258,6 +258,8 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_MODULE (1<<27) /* Non connected client used by some module. */
 #define CLIENT_PROTECTED (1<<28) /* Client should not be freed for now. */
 
+#define CLIENT_ROCKSDB (1<<29)  /* This is a non connected client used by Rocksdb */
+
 /* Client block type (btype field in client structure)
  * if CLIENT_BLOCKED flag is set. */
 #define BLOCKED_NONE 0    /* Not blocked, no CLIENT_BLOCKED flag set. */
@@ -642,6 +644,8 @@ typedef struct redisDb {
     int id;                     /* Database ID */
     long long avg_ttl;          /* Average TTL, just for stats */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+	dict* hotkey_index;			/* Check if it's not a cold key, dict = hotkey + coldkey in rocksdb */
+	dict* swapping_keys;	    /* keys in transporting from rocksdb */
 } redisDb;
 
 /* Client MULTI/EXEC state */
@@ -959,6 +963,18 @@ struct redisServer {
     int module_blocked_pipe[2]; /* Pipe used to awake the event loop if a
                                    client blocked on a module command needs
                                    to be processed. */
+
+	/* Rocksdb */
+	int comsuming_coldkey_pipe[2]; /* Pipe used to notice the event loop 
+								      that move cold key to rocksdb */
+	list *comsuming_coldkey_queue;  /* List of keys that need move to rocksdb */
+	int producing_hotkey_pipe[2];  /* Pipe used to notice the event loop
+								      move `cold` key to redis, level up*/
+	list *producing_hotkey_queue;  /* List of keys that move to redis, 
+								      level to `hot` one. 
+									  FIXME: with multithread comsumer background,
+									  make it wait-free?  */
+														
     /* Networking */
     int port;                   /* TCP listening port */
     int tcp_backlog;            /* TCP listen() backlog */
@@ -1281,6 +1297,11 @@ struct redisServer {
     pthread_mutex_t lruclock_mutex;
     pthread_mutex_t next_client_id_mutex;
     pthread_mutex_t unixtime_mutex;
+
+	/* Rocksdb */
+	unsigned long long maxhotmemory;/* Max number of hot data used in memory,
+									the overs need move to disk, use LRU evict policy  */
+
 };
 
 typedef struct pubsubPattern {
@@ -1406,7 +1427,10 @@ void moduleAcquireGIL(void);
 void moduleReleaseGIL(void);
 void moduleNotifyKeyspaceEvent(int type, const char *event, robj *key, int dbid);
 
-
+/* Swapping data (Rocksdb)*/
+void InitRocksDB(void);
+void swapdataComsumingProcess(aeEventLoop* el, int fd, void* privdata, int mask);
+void swapdataProducingProcess(aeEventLoop* el, int fd, void* privdata, int mask);
 /* Utils */
 long long ustime(void);
 long long mstime(void);
